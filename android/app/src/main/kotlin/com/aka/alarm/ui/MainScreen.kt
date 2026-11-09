@@ -31,7 +31,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,10 +43,14 @@ import androidx.compose.material3.InputChip
 import androidx.compose.material3.InputChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -215,7 +221,49 @@ private fun SettingsSheet(store: AlarmStore) {
         }
 
         Spacer(Modifier.height(24.dp))
+        Text("Snooze", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Each nudge snoozes for ${store.snoozeMinutes} minutes, even past the end " +
+                "of the window.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        )
+
+        Spacer(Modifier.height(8.dp))
+        // Discrete positions over Tuning.SNOOZE_OPTIONS_MINUTES, stepped like
+        // the sliders above.
+        val snoozeOptions = Tuning.SNOOZE_OPTIONS_MINUTES
+        val snoozeIndex = snoozeOptions.indexOf(store.snoozeMinutes).coerceAtLeast(0)
+        Slider(
+            value = snoozeIndex.toFloat(),
+            onValueChange = { raw ->
+                val idx = raw.roundToInt().coerceIn(0, snoozeOptions.lastIndex)
+                store.updateSnooze(snoozeOptions[idx])
+            },
+            valueRange = 0f..snoozeOptions.lastIndex.toFloat(),
+            steps = snoozeOptions.size - 2,
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(
+                "${snoozeOptions.first()} min",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            )
+            Text(
+                "${snoozeOptions.last()} min",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            )
+        }
+
+        Spacer(Modifier.height(24.dp))
         AlarmSoundSection(store)
+    }
+
+    // Closing the sheet ends a sound preview.
+    DisposableEffect(Unit) {
+        onDispose { store.stopSoundPreview() }
     }
 }
 
@@ -279,19 +327,41 @@ private fun AlarmSoundSection(store: AlarmStore) {
             }
         }
     }
-    InputChip(
-        selected = true,
-        onClick = openSystemPicker,
-        label = { Text(store.alarmSoundName ?: Tuning.BUILT_IN_TONE_NAME) },
-        leadingIcon = {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        InputChip(
+            selected = true,
+            onClick = openSystemPicker,
+            label = {
+                Text(
+                    store.alarmSoundName ?: Tuning.BUILT_IN_TONE_NAME,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            leadingIcon = {
+                Icon(
+                    Icons.Outlined.MusicNote,
+                    contentDescription = null,
+                    modifier = Modifier.size(InputChipDefaults.IconSize),
+                )
+            },
+            trailingIcon = removeIcon,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Spacer(Modifier.width(4.dp))
+        // Preview at the volume the fade ends on, so the pick can be checked
+        // before bed rather than discovered at 7 a.m.
+        IconButton(onClick = { store.toggleSoundPreview() }) {
             Icon(
-                Icons.Outlined.MusicNote,
-                contentDescription = null,
-                modifier = Modifier.size(InputChipDefaults.IconSize),
+                if (store.isPreviewingSound) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+                contentDescription = if (store.isPreviewingSound) {
+                    "Stop preview"
+                } else {
+                    "Preview alarm sound"
+                },
             )
-        },
-        trailingIcon = removeIcon,
-    )
+        }
+    }
     Spacer(Modifier.height(4.dp))
     Text(
         "Whichever you pick fades in from silence over a minute.",
@@ -378,7 +448,9 @@ private fun SetAlarmView(store: AlarmStore, onStart: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     WindowLabel(store)
-                    Spacer(Modifier.height(32.dp))
+                    Spacer(Modifier.height(12.dp))
+                    WindowLengthPicker(store)
+                    Spacer(Modifier.height(24.dp))
                     StartButton(onStart)
                 }
             }
@@ -393,6 +465,8 @@ private fun SetAlarmView(store: AlarmStore, onStart: () -> Unit) {
                 WheelPair(store, visibleRows)
                 Spacer(Modifier.height(24.dp))
                 WindowLabel(store)
+                Spacer(Modifier.height(16.dp))
+                WindowLengthPicker(store)
                 Spacer(Modifier.weight(1f))
                 StartButton(onStart)
             }
@@ -442,11 +516,38 @@ private fun WheelPair(store: AlarmStore, visibleRows: Int) {
 @Composable
 private fun WindowLabel(store: AlarmStore) {
     AutoShrinkText(
-        text = formatWindowLabel(store.selectedHour, store.selectedMinute),
+        text = formatWindowLabel(store.selectedHour, store.selectedMinute, store.wakeWindowMinutes),
         fontSize = 56.sp,
         fontWeight = FontWeight.Thin,
         color = MaterialTheme.colorScheme.onSurface,
     )
+}
+
+/** Window length, one segment per [Tuning.WAKE_WINDOW_OPTIONS_MINUTES] entry. */
+@Composable
+private fun WindowLengthPicker(store: AlarmStore) {
+    val options = Tuning.WAKE_WINDOW_OPTIONS_MINUTES
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    SingleChoiceSegmentedButtonRow {
+        options.forEachIndexed { index, minutes ->
+            SegmentedButton(
+                selected = store.wakeWindowMinutes == minutes,
+                onClick = { store.updateWakeWindow(minutes) },
+                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                // Same translucent treatment as the Start button.
+                colors = SegmentedButtonDefaults.colors(
+                    activeContainerColor = onSurface.copy(alpha = 0.14f),
+                    activeContentColor = onSurface,
+                    inactiveContainerColor = Color.Transparent,
+                    inactiveContentColor = onSurface.copy(alpha = 0.6f),
+                    activeBorderColor = onSurface.copy(alpha = 0.2f),
+                    inactiveBorderColor = onSurface.copy(alpha = 0.2f),
+                ),
+            ) {
+                Text("$minutes min")
+            }
+        }
+    }
 }
 
 @Composable
@@ -496,9 +597,9 @@ private fun AutoShrinkText(
     )
 }
 
-private fun formatWindowLabel(hour: Int, minute: Int): String {
+private fun formatWindowLabel(hour: Int, minute: Int, windowMinutes: Int): String {
     val totalStart = hour * 60 + minute
-    val totalEnd = totalStart + Tuning.wakeWindowDuration.inWholeMinutes.toInt()
+    val totalEnd = totalStart + windowMinutes
     val sh = (totalStart / 60) % 24; val sm = totalStart % 60
     val eh = (totalEnd / 60) % 24; val em = totalEnd % 60
     return "%02d:%02d – %02d:%02d".format(sh, sm, eh, em)

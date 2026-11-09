@@ -18,8 +18,9 @@ class PhaseAlarmTest {
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
 
+    private val windowMillis = Tuning.DEFAULT_WAKE_WINDOW_MINUTES * 60_000L
     private val start = epoch(2026, Calendar.AUGUST, 13, 11, 15)
-    private val end = start + Tuning.wakeWindowDuration.inWholeMilliseconds
+    private val end = start + windowMillis
 
     // ----- requestFor ---------------------------------------------------------
 
@@ -158,6 +159,15 @@ class PhaseAlarmTest {
         val phase = AlarmPhase.Snoozing(start + 60_000L, end)
         val fired = PhaseAlarm.requestFor(phase, 60)!!
         assertEquals(AlarmPhase.Alarming(end), PhaseAlarm.transitionFor(phase, fired, 480))
+    }
+
+    @Test
+    fun snoozePastWindowEnd_firesAtDeadlineAndRingsAgain() {
+        // A fixed snooze is honoured even when it runs past the window end.
+        val phase = AlarmPhase.Snoozing(end + 10 * 60_000L, end)
+        val request = PhaseAlarm.requestFor(phase, 60)!!
+        assertEquals(end + 10 * 60_000L, request.fireAtMillis)
+        assertEquals(AlarmPhase.Alarming(end), PhaseAlarm.transitionFor(phase, request, 60))
     }
 
     @Test

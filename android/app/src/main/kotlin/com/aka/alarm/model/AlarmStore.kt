@@ -30,7 +30,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
-import kotlin.random.Random
 
 /**
  * Singleton-ish state machine for the alarm. Mirrors the iOS `AlarmStore`:
@@ -65,6 +64,18 @@ class AlarmStore(private val app: Application) {
      * -1 = right after starting. Persisted immediately on change.
      */
     var activationLeadMinutes by mutableIntStateOf(Tuning.DEFAULT_ACTIVATION_LEAD_MINUTES)
+        private set
+
+    /** Length of the wake window, one of [Tuning.WAKE_WINDOW_OPTIONS_MINUTES]. Persisted. */
+    var wakeWindowMinutes by mutableIntStateOf(Tuning.DEFAULT_WAKE_WINDOW_MINUTES)
+        private set
+
+    /** Fixed snooze length, one of [Tuning.SNOOZE_OPTIONS_MINUTES]. Persisted. */
+    var snoozeMinutes by mutableIntStateOf(Tuning.DEFAULT_SNOOZE_MINUTES)
+        private set
+
+    /** True while the settings sheet is playing the alarm sound as a preview. */
+    var isPreviewingSound by mutableStateOf(false)
         private set
 
     /** Display name of the user's own alarm sound, or null for the built-in tone. */
@@ -113,6 +124,18 @@ class AlarmStore(private val app: Application) {
         } else {
             Tuning.DEFAULT_ACTIVATION_LEAD_MINUTES
         }
+        val savedWindow = prefs.getInt(KEY_WAKE_WINDOW, Tuning.DEFAULT_WAKE_WINDOW_MINUTES)
+        wakeWindowMinutes = if (savedWindow in Tuning.WAKE_WINDOW_OPTIONS_MINUTES) {
+            savedWindow
+        } else {
+            Tuning.DEFAULT_WAKE_WINDOW_MINUTES
+        }
+        val savedSnooze = prefs.getInt(KEY_SNOOZE, Tuning.DEFAULT_SNOOZE_MINUTES)
+        snoozeMinutes = if (savedSnooze in Tuning.SNOOZE_OPTIONS_MINUTES) {
+            savedSnooze
+        } else {
+            Tuning.DEFAULT_SNOOZE_MINUTES
+        }
         // A remembered name whose file is gone (storage cleared) falls back to the tone.
         alarmSoundName = prefs.getString(KEY_SOUND_NAME, null)
             ?.takeIf { customSound.current() != null }
@@ -127,6 +150,7 @@ class AlarmStore(private val app: Application) {
         scope.launch {
             withContext(Dispatchers.IO) { customSound.import(uri) }
                 .onSuccess { name ->
+                    stopSoundPreview()
                     alarmSoundName = name
                     alarmSoundError = null
                     prefs.edit { putString(KEY_SOUND_NAME, name) }
@@ -143,10 +167,49 @@ class AlarmStore(private val app: Application) {
     }
 
     fun clearCustomAlarmSound() {
+        stopSoundPreview()
         customSound.clear()
         alarmSoundName = null
         alarmSoundError = null
         prefs.edit { remove(KEY_SOUND_NAME) }
+    }
+
+    /**
+     * Plays the current alarm sound at full alarm volume (no fade, no
+     * vibration) so it can be checked before bed; a second call stops it.
+     * Never while the real alarm is ringing — that owns the player.
+     */
+    fun toggleSoundPreview() {
+        if (isPreviewingSound) {
+            stopSoundPreview()
+            return
+        }
+        if (phase is AlarmPhase.Alarming) return
+        if (player.preview(customSound.current())) {
+            isPreviewingSound = true
+        } else {
+            alarmSoundError = "Couldn't play the alarm sound."
+        }
+    }
+
+    fun stopSoundPreview() {
+        if (!isPreviewingSound) return
+        isPreviewingSound = false
+        player.stop()
+    }
+
+    /** Persists straight away; applies from the next Start. */
+    fun updateWakeWindow(minutes: Int) {
+        if (minutes !in Tuning.WAKE_WINDOW_OPTIONS_MINUTES) return
+        wakeWindowMinutes = minutes
+        prefs.edit { putInt(KEY_WAKE_WINDOW, minutes) }
+    }
+
+    /** Persists straight away; applies from the next snooze. */
+    fun updateSnooze(minutes: Int) {
+        if (minutes !in Tuning.SNOOZE_OPTIONS_MINUTES) return
+        snoozeMinutes = minutes
+        prefs.edit { putInt(KEY_SNOOZE, minutes) }
     }
 
     /**
@@ -180,7 +243,9 @@ class AlarmStore(private val app: Application) {
 
     fun startAlarm(now: Long = System.currentTimeMillis()) {
         persistSelection()
-        val (start, end) = AlarmSchedule.computeWakeWindow(now, selectedHour, selectedMinute)
+        val (start, end) = AlarmSchedule.computeWakeWindow(
+            now, selectedHour, selectedMinute, wakeWindowMinutes,
+        )
         transition(AlarmSchedule.initialPhase(now, start, end, activationLeadMinutes))
     }
 
@@ -211,6 +276,8 @@ class AlarmStore(private val app: Application) {
         const val KEY_SENSITIVITY = "sensitivity"
         const val KEY_ACTIVATION_LEAD = "activationLeadMinutes"
         const val KEY_SOUND_NAME = "alarmSoundName"
+        const val KEY_WAKE_WINDOW = "wakeWindowMinutes"
+        const val KEY_SNOOZE = "snoozeMinutes"
     }
 
     fun cancelAlarm() {
@@ -267,17 +334,11 @@ class AlarmStore(private val app: Application) {
     private fun handleNudge() {
         val p = phase
         if (p is AlarmPhase.Alarming) {
+            // Fixed length, honoured even when it runs past the window end.
             val now = System.currentTimeMillis()
-            val remaining = p.end - now
-            if (remaining < Tuning.snoozeMinDuration.inWholeMilliseconds) return
-            val upper = minOf(Tuning.snoozeMaxDuration.inWholeMilliseconds, remaining)
-            val duration = Random.nextLong(
-                Tuning.snoozeMinDuration.inWholeMilliseconds,
-                upper + 1
-            )
             transition(
                 AlarmPhase.Snoozing(
-                    until = now + duration,
+                    until = now + snoozeMinutes * 60_000L,
                     end = p.end
                 )
             )
@@ -291,6 +352,8 @@ class AlarmStore(private val app: Application) {
         phaseJob = null
         // Drop the pending timed transition; re-armed below for the new phase.
         phaseAlarm.cancel()
+        // Every branch below stops or restarts the player, which ends a preview.
+        isPreviewingSound = false
 
         val current = phase
 

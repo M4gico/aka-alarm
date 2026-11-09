@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (Android)
+
+- **15- or 30-minute wake window.** A selector under the window on the
+  set-alarm screen picks its length; 30 minutes stays the default and the
+  choice is remembered.
+- **Fixed snooze length.** New "Snooze" setting: 5, 10 or 15 minutes
+  (default 15). Every nudge snoozes for exactly that long, even when it runs
+  past the end of the window — replacing the random 60 s–15 min snooze that
+  was clamped to the window.
+- **Preview the alarm sound.** A ▶ button next to the sound chip in settings
+  plays the current pick at full alarm volume; tap ■ or close the sheet to
+  stop.
+
 ## 1.3.0 — 2026-10-04
 
 **Android alarms now ring on time after a snooze** — the "sounds 2 hours

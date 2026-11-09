@@ -45,15 +45,21 @@ class AlarmPlayer(private val context: Context) {
 
     fun start(customSound: File? = null) {
         stop()
-        val started = (customSound != null && startMediaPlayer { it.setDataSource(customSound.absolutePath) }) ||
-            startMediaPlayer { mp ->
-                context.resources.openRawResourceFd(R.raw.alarm_tone).use { fd ->
-                    mp.setDataSource(fd.fileDescriptor, fd.startOffset, fd.length)
-                }
-            }
-        if (!started) startSynthTone()
+        if (!startSource(customSound)) startSynthTone()
         startFade()
         startVibration()
+    }
+
+    /**
+     * Plays the sound the alarm would use at its full volume — no fade, no
+     * vibration, no synthesised fallback — so the user can hear their pick.
+     * False if neither the custom sound nor the built-in tone opens.
+     */
+    fun preview(customSound: File? = null): Boolean {
+        stop()
+        if (!startSource(customSound)) return false
+        setVolume(Tuning.ALARM_END_VOLUME)
+        return true
     }
 
     fun stop() {
@@ -83,6 +89,15 @@ class AlarmPlayer(private val context: Context) {
     }
 
     // MARK: Sources
+
+    /** The user's file, else the built-in tone; false if neither opens. */
+    private fun startSource(customSound: File?): Boolean =
+        (customSound != null && startMediaPlayer { it.setDataSource(customSound.absolutePath) }) ||
+            startMediaPlayer { mp ->
+                context.resources.openRawResourceFd(R.raw.alarm_tone).use { fd ->
+                    mp.setDataSource(fd.fileDescriptor, fd.startOffset, fd.length)
+                }
+            }
 
     /**
      * Looping [MediaPlayer] on the alarm stream fed by [source]; false (and

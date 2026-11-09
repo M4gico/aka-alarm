@@ -7,12 +7,14 @@ import kotlin.time.Duration.Companion.seconds
 
 /** All tunable behaviour lives here. Tweak values and rebuild. */
 object Tuning {
-    // Wake window
-    val wakeWindowDuration: Duration = 30.minutes
+    // Wake window: user picks its length on the set-alarm screen.
+    val WAKE_WINDOW_OPTIONS_MINUTES = listOf(15, 30)
+    const val DEFAULT_WAKE_WINDOW_MINUTES = 30
 
-    // Snooze
-    val snoozeMinDuration: Duration = 60.seconds
-    val snoozeMaxDuration: Duration = 15.minutes
+    // Snooze: every nudge snoozes for this fixed, user-chosen length — even
+    // past the end of the wake window.
+    val SNOOZE_OPTIONS_MINUTES = listOf(5, 10, 15)
+    const val DEFAULT_SNOOZE_MINUTES = 15
 
     // Mic activation lead: how long before the wake window the microphone
     // starts listening. Until then the alarm sits in the Armed phase — process

@@ -14,7 +14,9 @@ object AlarmSchedule {
         nowMillis: Long,
         hour: Int,
         minute: Int,
+        windowMinutes: Int,
     ): Pair<Long, Long> {
+        val windowMillis = windowMinutes * 60_000L
         val cal = Calendar.getInstance().apply {
             timeInMillis = nowMillis
             set(Calendar.HOUR_OF_DAY, hour)
@@ -23,12 +25,12 @@ object AlarmSchedule {
             set(Calendar.MILLISECOND, 0)
         }
         var start = cal.timeInMillis
-        var end = start + Tuning.wakeWindowDuration.inWholeMilliseconds
+        var end = start + windowMillis
         // Only roll forward a day if the *entire* window has already passed.
         if (end <= nowMillis) {
             cal.add(Calendar.DAY_OF_YEAR, 1)
             start = cal.timeInMillis
-            end = start + Tuning.wakeWindowDuration.inWholeMilliseconds
+            end = start + windowMillis
         }
         return start to end
     }
